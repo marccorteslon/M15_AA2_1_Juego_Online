@@ -1,9 +1,12 @@
 using UnityEngine;
+using Unity.Netcode;
 
 [DisallowMultipleComponent]
 [RequireComponent(typeof(Rigidbody))]
 public class Projectile : MonoBehaviour
 {
+    public int damage = 21;
+
     public float disappearTime = 5f;
     public Vector3 forceMin = new Vector3(-1, -1, 50);
     public Vector3 forceMax = new Vector3(1, 1, 100);
@@ -11,14 +14,22 @@ public class Projectile : MonoBehaviour
     public float collisionForceMultiplier = 2f;
     public float radius = .1f;
     public GameObject spawnOnCollide;
-    [HideInInspector]
-    public Rigidbody rb;
+
+    [HideInInspector] public Rigidbody rb;
+    [HideInInspector] public ulong shooterClientId;
 
     Vector3 lastPos;
+
     void Start()
     {
         rb = GetComponent<Rigidbody>();
-        rb.AddRelativeForce(new Vector3(Random.Range(forceMin.x, forceMax.x), Random.Range(forceMin.y, forceMax.y), Random.Range(forceMin.z, forceMax.z)));
+
+        rb.AddRelativeForce(new Vector3(
+            Random.Range(forceMin.x, forceMax.x),
+            Random.Range(forceMin.y, forceMax.y),
+            Random.Range(forceMin.z, forceMax.z)
+        ));
+
         Destroy(gameObject, disappearTime);
         lastPos = transform.position;
         transform.parent = null;
@@ -32,7 +43,7 @@ public class Projectile : MonoBehaviour
 
         RaycastHit hit;
 
-        if (Physics.SphereCast(lastPos, radius, dir, out hit, dir.magnitude, layers))
+        if (Physics.SphereCast(lastPos, radius, dir.normalized, out hit, dir.magnitude, layers))
         {
             Hitted(hit);
         }
@@ -42,14 +53,24 @@ public class Projectile : MonoBehaviour
 
     void Hitted(RaycastHit hit)
     {
-        if (spawnOnCollide)
+        Debug.Log($"La bala golpeó: {hit.collider.name}");
+        Debug.Log($"Objeto padre: {hit.collider.transform.root.name}");
+
+        PlayerHealth health = hit.collider.GetComponentInParent<PlayerHealth>();
+
+        if (health != null)
         {
-            GameObject temp = Instantiate(spawnOnCollide, hit.point, Quaternion.LookRotation(hit.normal), hit.collider.transform);
+            Debug.Log($"Disparo detectado contra jugador: {health.name}");
+            health.TakeDamageServerRpc(damage, shooterClientId);
         }
-        if (hit.rigidbody)
+        else
         {
-            hit.rigidbody.AddForceAtPosition(rb.linearVelocity * rb.mass * collisionForceMultiplier, this.transform.position);
+            Debug.LogWarning(
+                $"El objeto golpeado no tiene PlayerHealth. " +
+                $"Collider: {hit.collider.name}, Root: {hit.collider.transform.root.name}"
+            );
         }
+
         Destroy(gameObject);
     }
 }
