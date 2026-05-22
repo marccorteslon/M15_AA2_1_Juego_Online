@@ -53,7 +53,7 @@ public class Projectile : MonoBehaviour
 
     void Hitted(RaycastHit hit)
     {
-        Debug.Log($"La bala golpeó: {hit.collider.name}");
+        Debug.Log($"Bala golpea: {hit.collider.name}");
         Debug.Log($"Objeto padre: {hit.collider.transform.root.name}");
 
         PlayerHealth health = hit.collider.GetComponentInParent<PlayerHealth>();
