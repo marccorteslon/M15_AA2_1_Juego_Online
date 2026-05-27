@@ -8,14 +8,14 @@ using Unity.Netcode;
 public class CharacterMover : NetworkBehaviour
 {
     public Camera cam;
-    public float movementAcceleration; // Conservada por compatibilidad en inspector
-    public float movementDeceleration; // Conservada por compatibilidad en inspector
+    public float movementAcceleration;
+    public float movementDeceleration;
 
     Vector3 currentMov;
 
-    public float speedMovement = 6f; // Velocidad de movimiento base
-    public float speedTurn = 10f;     // Velocidad de rotación
-    public float jumpForce = 5f;      // Fuerza de salto
+    public float speedMovement = 6f;
+    public float speedTurn = 10f;
+    public float jumpForce = 5f;
 
     Rigidbody rb;
     GroundDetector gd;
@@ -36,7 +36,6 @@ public class CharacterMover : NetworkBehaviour
         rb = GetComponent<Rigidbody>();
         gd = GetComponent<GroundDetector>();
 
-        // Configuración óptima del Rigidbody para evitar rozamientos raros y caídas lentas
         rb.interpolation = RigidbodyInterpolation.Interpolate;
         rb.collisionDetectionMode = CollisionDetectionMode.Continuous;
 
@@ -47,11 +46,9 @@ public class CharacterMover : NetworkBehaviour
     {
         if (!IsOwner) return;
 
-        // Bloquear entrada si el jugador está muerto
         PlayerHealth health = GetComponent<PlayerHealth>();
         if (health != null && health.isDead.Value) return;
 
-        // Salto básico y responsivo
         if (gd.grounded && InputManager.actions.Player.Jump.WasPressedThisFrame())
         {
             rb.linearVelocity = new Vector3(rb.linearVelocity.x, jumpForce, rb.linearVelocity.z);
@@ -62,7 +59,6 @@ public class CharacterMover : NetworkBehaviour
     {
         if (!IsOwner) return;
 
-        // Detener movimiento por completo si está muerto
         PlayerHealth health = GetComponent<PlayerHealth>();
         if (health != null && health.isDead.Value)
         {
@@ -107,10 +103,8 @@ public class CharacterMover : NetworkBehaviour
 
     void Movement()
     {
-        // 1. Obtener la entrada del Input System
         Vector2 input = InputManager.actions.Player.Move.ReadValue<Vector2>();
 
-        // 2. Calcular la dirección de movimiento relativa a la cámara pero APLANADA en el eje Y
         Vector3 camForward = cam.transform.forward;
         camForward.y = 0;
         camForward = camForward.normalized;
@@ -121,13 +115,10 @@ public class CharacterMover : NetworkBehaviour
 
         Vector3 moveDirection = (camForward * input.y + camRight * input.x).normalized;
 
-        // 3. Aplicar velocidad directa al Rigidbody en X y Z (permite frenar y girar al instante)
         Vector3 targetVelocity = moveDirection * speedMovement;
         
-        // Conservamos la velocidad vertical (gravedad y saltos)
         rb.linearVelocity = new Vector3(targetVelocity.x, rb.linearVelocity.y, targetVelocity.z);
 
-        // 4. Rotar de forma fluida hacia la dirección a la que nos movemos
         if (moveDirection.magnitude > 0.05f)
         {
             Quaternion targetRotation = Quaternion.LookRotation(moveDirection);

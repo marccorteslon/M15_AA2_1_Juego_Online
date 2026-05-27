@@ -11,7 +11,7 @@ public class PlayerHealth : NetworkBehaviour
         NetworkVariableWritePermission.Server
     );
 
-    // NUEVAS VARIABLES PARA PUNTUACIÓN Y ESTADO DE MUERTE
+    // Puntuación y estado de muerte
     public NetworkVariable<int> score = new NetworkVariable<int>(
         0,
         NetworkVariableReadPermission.Everyone,
@@ -24,8 +24,27 @@ public class PlayerHealth : NetworkBehaviour
         NetworkVariableWritePermission.Server
     );
 
+    // Referencia estática al jugador local (tirador)
+    public static PlayerHealth LocalPlayerInstance;
+
     public override void OnNetworkSpawn()
     {
+        if (IsOwner)
+        {
+            LocalPlayerInstance = this;
+
+            // Asignar el RaycastLookAt del jugador local al UIManager
+            UIManager ui = FindFirstObjectByType<UIManager>();
+            if (ui != null)
+            {
+                ui.realAimLookAt = GetComponentInChildren<RaycastLookAt>();
+                if (ui.cam == null)
+                {
+                    ui.cam = Camera.main;
+                }
+            }
+        }
+
         if (IsServer)
         {
             currentHealth.Value = maxHealth;
@@ -33,41 +52,44 @@ public class PlayerHealth : NetworkBehaviour
             isDead.Value = false;
         }
 
-        // Suscribirse al cambio de estado de muerte para ocultar/mostrar el personaje
+        // Suscribirse al estado de muerte
         isDead.OnValueChanged += OnDeadStateChanged;
         
-        // Ejecutar inicialmente por si acaso ya estuviese muerto al spawnear
         TogglePlayerState(!isDead.Value);
     }
 
     public override void OnNetworkDespawn()
     {
         isDead.OnValueChanged -= OnDeadStateChanged;
+        
+        if (IsOwner)
+        {
+            LocalPlayerInstance = null;
+        }
     }
 
     private void OnDeadStateChanged(bool previousValue, bool newValue)
     {
-        // Si newValue es true (está muerto), desactivamos físicas y visuales. Si es false, las activamos.
         TogglePlayerState(!newValue);
     }
 
     private void TogglePlayerState(bool active)
     {
-        // Ocultar/Mostrar visuales (SkinnedMeshRenderers, MeshRenderers, etc.)
+        // Ocultar/Mostrar visuales
         Renderer[] renderers = GetComponentsInChildren<Renderer>();
         foreach (Renderer r in renderers)
         {
             r.enabled = active;
         }
 
-        // Ocultar/Mostrar colisionadores para no poder dispararle ni chocar con él
+        // Ocultar/Mostrar colisiones
         Collider[] colliders = GetComponentsInChildren<Collider>();
         foreach (Collider c in colliders)
         {
             c.enabled = active;
         }
 
-        // Desactivar gravedad y físicas si está muerto para que no caiga al vacío
+        // Desactivar físicas al morir
         Rigidbody rb = GetComponent<Rigidbody>();
         if (rb != null)
         {
@@ -81,29 +103,8 @@ public class PlayerHealth : NetworkBehaviour
         }
     }
 
-    [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Owner)]
-    public void DealDamageServerRpc(ulong targetClientId, int damage)
-    {
-        // Esto se ejecuta en el servidor. Buscamos al jugador dañado de forma ultra robusta.
-        PlayerHealth targetHealth = null;
-        PlayerHealth[] allPlayers = FindObjectsByType<PlayerHealth>(FindObjectsSortMode.None);
-        foreach (PlayerHealth p in allPlayers)
-        {
-            if (p.OwnerClientId == targetClientId)
-            {
-                targetHealth = p;
-                break;
-            }
-        }
-
-        // Si existe en el servidor, le aplicamos el daño
-        if (targetHealth != null)
-        {
-            targetHealth.ApplyDamageFromServer(damage, OwnerClientId);
-        }
-    }
-
-    public void ApplyDamageFromServer(int damage, ulong shooterClientId)
+    [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
+    public void TakeDamageServerRpc(int damage, ulong shooterClientId)
     {
         // Esto se ejecuta estrictamente en el servidor
         if (isDead.Value || currentHealth.Value <= 0) return;
@@ -120,17 +121,29 @@ public class PlayerHealth : NetworkBehaviour
             currentHealth.Value = 0;
             isDead.Value = true;
 
-            // PUNTUACIÓN: Buscar al asesino y sumarle +100 puntos de forma robusta en el servidor
+            // Sumar puntuación al asesino
             if (shooterClientId != OwnerClientId)
             {
                 PlayerHealth killerHealth = null;
-                PlayerHealth[] allPlayers = FindObjectsByType<PlayerHealth>(FindObjectsSortMode.None);
-                foreach (PlayerHealth p in allPlayers)
+                
+                if (NetworkManager.Singleton.ConnectedClients.TryGetValue(shooterClientId, out var client))
                 {
-                    if (p.OwnerClientId == shooterClientId)
+                    if (client.PlayerObject != null)
                     {
-                        killerHealth = p;
-                        break;
+                        killerHealth = client.PlayerObject.GetComponent<PlayerHealth>();
+                    }
+                }
+
+                if (killerHealth == null)
+                {
+                    PlayerHealth[] allPlayers = FindObjectsByType<PlayerHealth>(FindObjectsSortMode.None);
+                    foreach (PlayerHealth p in allPlayers)
+                    {
+                        if (p.OwnerClientId == shooterClientId)
+                        {
+                            killerHealth = p;
+                            break;
+                        }
                     }
                 }
 
@@ -141,7 +154,7 @@ public class PlayerHealth : NetworkBehaviour
                 }
                 else
                 {
-                    Debug.LogWarning($"No se encontró al asesino con ClientId: {shooterClientId} en la escena.");
+                    Debug.LogWarning($"No se encontró al asesino con ClientId: {shooterClientId} en la escena ni en la lista de clientes.");
                 }
             }
 
@@ -154,13 +167,26 @@ public class PlayerHealth : NetworkBehaviour
     {
         yield return new WaitForSeconds(3f);
 
-        // Posición de respawn aleatoria cerca del centro del mapa
-        Vector3 randomPos = new Vector3(Random.Range(-8f, 8f), 1f, Random.Range(-8f, 8f));
+        Vector3 spawnPos = Vector3.zero;
 
-        // Teletransportar al cliente a través de una ClientRpc dirigida al dueño (Client-Side Authority)
-        RespawnClientRpc(randomPos);
+        // Buscar spawn points en la escena
+        GameObject[] spawnPoints = GameObject.FindGameObjectsWithTag("Respawn");
 
-        // Restaurar salud y quitar estado de muerte en el servidor
+        if (spawnPoints.Length > 0)
+        {
+            int randomIndex = Random.Range(0, spawnPoints.Length);
+            spawnPos = spawnPoints[randomIndex].transform.position;
+            Debug.Log($"[SERVIDOR] Reapareciendo a Jugador {OwnerClientId} en el SpawnPoint: '{spawnPoints[randomIndex].name}' ({spawnPos})");
+        }
+        else
+        {
+            // Fallback si no hay spawn points
+            spawnPos = new Vector3(Random.Range(-8f, 8f), 1f, Random.Range(-8f, 8f));
+            Debug.LogWarning($"[SERVIDOR] No se encontraron objetos con tag 'Respawn'. Usando posición fallback aleatoria: {spawnPos}");
+        }
+
+        RespawnClientRpc(spawnPos);
+
         currentHealth.Value = maxHealth;
         isDead.Value = false;
 
@@ -183,7 +209,6 @@ public class PlayerHealth : NetworkBehaviour
         }
     }
 
-    // RPCs PARA REPLICACIÓN DE DISPAROS (SINCRONIZACIÓN VISUAL DE BALAS)
     [ServerRpc]
     public void ShootServerRpc(Vector3 position, Quaternion rotation)
     {
@@ -193,7 +218,7 @@ public class PlayerHealth : NetworkBehaviour
     [ClientRpc]
     private void ShootClientRpc(Vector3 position, Quaternion rotation, ulong shooterId)
     {
-        // Si no somos el tirador, instanciamos la bala visualmente
+        // Instanciar la bala visualmente para los demás jugadores
         if (NetworkManager.Singleton.LocalClientId != shooterId)
         {
             GenericGun gun = GetComponentInChildren<GenericGun>();
@@ -201,14 +226,14 @@ public class PlayerHealth : NetworkBehaviour
             {
                 GameObject bulletObject = Instantiate(gun.bullet, position, rotation);
                 
-                // Desactivar el daño y la colisión física para la bala puramente visual
-                Projectile projectile = bulletObject.GetComponent<Projectile>();
+                // Destruir Projectile en la bala visual para que no haga daño real
+                Projectile projectile = bulletObject.GetComponentInChildren<Projectile>();
                 if (projectile != null)
                 {
-                    projectile.enabled = false;
+                    Destroy(projectile);
                 }
 
-                Collider col = bulletObject.GetComponent<Collider>();
+                Collider col = bulletObject.GetComponentInChildren<Collider>();
                 if (col != null)
                 {
                     col.enabled = false;
@@ -221,8 +246,15 @@ public class PlayerHealth : NetworkBehaviour
 
     private void OnGUI()
     {
-        // HUD visible únicamente para el jugador propietario
-        if (!IsOwner) return;
+        if (!IsSpawned || !IsOwner) return;
+
+        // Evitar UI duplicada de clones manuales
+        if (NetworkManager.Singleton != null && 
+            NetworkManager.Singleton.LocalClient != null && 
+            NetworkManager.Singleton.LocalClient.PlayerObject != NetworkObject)
+        {
+            return;
+        }
 
         if (isDead.Value)
         {

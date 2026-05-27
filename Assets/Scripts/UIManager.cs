@@ -25,7 +25,6 @@ public class UIManager : MonoBehaviour
         SetInterface(false);
     }
 
-    // Update is called once per frame
     void Update()
     {
         if (Keyboard.current.fKey.wasPressedThisFrame)
@@ -49,6 +48,8 @@ public class UIManager : MonoBehaviour
 
     private void OnGUI()
     {
+        if (realAimLookAt == null || cam == null) return;
+
         Vector2 ViewportPosition = cam.WorldToViewportPoint(realAimLookAt.lookingAt);
         Vector2 WorldObject_ScreenPosition = new Vector2(
         ((ViewportPosition.x * canvasRect.sizeDelta.x) - (canvasRect.sizeDelta.x * 0.5f)),
