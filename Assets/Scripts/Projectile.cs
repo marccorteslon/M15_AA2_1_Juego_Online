@@ -10,7 +10,7 @@ public class Projectile : MonoBehaviour
     public float disappearTime = 5f;
     public Vector3 forceMin = new Vector3(-1, -1, 50);
     public Vector3 forceMax = new Vector3(1, 1, 100);
-    public LayerMask layers;
+    public LayerMask layers; // Conservada por compatibilidad en inspector
     public float collisionForceMultiplier = 2f;
     public float radius = .1f;
     public GameObject spawnOnCollide;
@@ -41,36 +41,66 @@ public class Projectile : MonoBehaviour
 
         Debug.DrawRay(lastPos, dir, Color.blue, disappearTime);
 
-        RaycastHit hit;
-
-        if (Physics.SphereCast(lastPos, radius, dir.normalized, out hit, dir.magnitude, layers))
+        // Usamos SphereCastAll para obtener TODOS los impactos en la trayectoria de la bala.
+        // Esto evita que si la bala "nace" dentro del colisionador del propio tirador, el raycast se bloquee y no detecte nada más.
+        RaycastHit[] hits = Physics.SphereCastAll(lastPos, radius, dir.normalized, dir.magnitude);
+        
+        foreach (RaycastHit hit in hits)
         {
-            Hitted(hit);
+            PlayerHealth targetHealth = hit.collider.GetComponentInParent<PlayerHealth>();
+
+            if (targetHealth != null)
+            {
+                // Ignorar al propio tirador que disparó la bala
+                if (targetHealth.OwnerClientId == shooterClientId)
+                {
+                    continue; // Sigue buscando en la trayectoria
+                }
+
+                Hitted(hit, targetHealth);
+                break; // Detener bala en el primer jugador válido
+            }
+            else
+            {
+                // Si es un trigger y no es un jugador, lo ignoramos y dejamos que la bala continúe
+                if (hit.collider.isTrigger) continue;
+
+                Hitted(hit, null);
+                break; // Detener bala contra el entorno (paredes, etc.)
+            }
         }
 
         lastPos = transform.position;
     }
 
-    void Hitted(RaycastHit hit)
+    void Hitted(RaycastHit hit, PlayerHealth targetHealth)
     {
-        Debug.Log($"Bala golpea: {hit.collider.name}");
-        Debug.Log($"Objeto padre: {hit.collider.transform.root.name}");
-
-        PlayerHealth health = hit.collider.GetComponentInParent<PlayerHealth>();
-
-        if (health != null)
+        if (targetHealth != null)
         {
-            Debug.Log($"Disparo detectado contra jugador: {health.name}");
-            health.TakeDamageServerRpc(damage, shooterClientId);
+            // Buscar al jugador local (el dueño que disparó) para lanzar el ServerRpc desde SU objeto
+            PlayerHealth localShooter = null;
+            PlayerHealth[] players = FindObjectsByType<PlayerHealth>(FindObjectsSortMode.None);
+            foreach (PlayerHealth p in players)
+            {
+                if (p.IsOwner)
+                {
+                    localShooter = p;
+                    break;
+                }
+            }
+
+            if (localShooter != null)
+            {
+                Debug.Log($"¡Bala golpea a jugador: {targetHealth.name}! Enviando solicitud de daño al servidor.");
+                localShooter.DealDamageServerRpc(targetHealth.OwnerClientId, damage);
+            }
         }
         else
         {
-            Debug.LogWarning(
-                $"El objeto golpeado no tiene PlayerHealth. " +
-                $"Collider: {hit.collider.name}, Root: {hit.collider.transform.root.name}"
-            );
+            Debug.Log($"Bala golpea entorno: {hit.collider.name}");
         }
 
+        // Destruir la bala tras el impacto
         Destroy(gameObject);
     }
 }

@@ -45,6 +45,10 @@ public class GenericGun : MonoBehaviour
     {
         if (ownerNetworkObject != null && !ownerNetworkObject.IsOwner) return;
 
+        // Si el jugador está muerto, no se puede disparar ni recuperar la posición del arma
+        PlayerHealth health = GetComponentInParent<PlayerHealth>();
+        if (health != null && health.isDead.Value) return;
+
         transform.localPosition = Vector3.Lerp(transform.localPosition, originalPosition, positionRecover * Time.deltaTime);
         transform.localRotation = Quaternion.Lerp(transform.localRotation, originalRotation, rotationRecover * Time.deltaTime);
 
@@ -70,6 +74,7 @@ public class GenericGun : MonoBehaviour
     {
         clipCurrent--;
 
+        // 1. Instanciamos la bala local autoregistrada con colisiones
         GameObject bulletObject = Instantiate(bullet, firePoint.position, firePoint.rotation);
 
         Projectile projectile = bulletObject.GetComponent<Projectile>();
@@ -83,6 +88,16 @@ public class GenericGun : MonoBehaviour
 
         onFire.Invoke();
         StartCoroutine(Knockback_Corutine());
+
+        // 2. Avisamos al servidor a través del NetworkBehaviour principal (PlayerHealth) para que el resto vean la bala
+        if (ownerNetworkObject != null && ownerNetworkObject.IsOwner)
+        {
+            PlayerHealth health = ownerNetworkObject.GetComponent<PlayerHealth>();
+            if (health != null)
+            {
+                health.ShootServerRpc(firePoint.position, firePoint.rotation);
+            }
+        }
     }
 
     IEnumerator Knockback_Corutine()
